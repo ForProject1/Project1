@@ -171,6 +171,7 @@ thread_create (const char *name, int priority,
                thread_func *function, void *aux) 
 {
   struct thread *t;
+  struct list_elem *ea;
   struct kernel_thread_frame *kf;
   struct switch_entry_frame *ef;
   struct switch_threads_frame *sf;
@@ -204,6 +205,10 @@ thread_create (const char *name, int priority,
 
   /* Add to run queue. */
   thread_unblock (t);
+  
+  if ( thread_get_priority() < t->priority) {
+	thread_yield();
+  }
 
   return tid;
 }
@@ -214,6 +219,7 @@ thread_create (const char *name, int priority,
    This function must be called with interrupts turned off.  It
    is usually a better idea to use one of the synchronization
    primitives in synch.h. */
+
 void
 thread_block (void) 
 {
@@ -241,7 +247,7 @@ thread_unblock (struct thread *t)
 
   old_level = intr_disable ();
   ASSERT (t->status == THREAD_BLOCKED);
-  list_push_back (&ready_list, &t->elem);
+  list_insert_ordered(&ready_list, &t->elem, &less_priority, NULL);
   t->status = THREAD_READY;
   intr_set_level (old_level);
 }
@@ -311,8 +317,10 @@ thread_yield (void)
   ASSERT (!intr_context ());
 
   old_level = intr_disable ();
-  if (cur != idle_thread) 
-    list_push_back (&ready_list, &cur->elem);
+  if (cur != idle_thread) {
+    list_insert_ordered(&ready_list, &cur->elem, &less_priority, NULL);
+  }
+    //list_push_back (&ready_list, &cur->elem);
   cur->status = THREAD_READY;
   schedule ();
   intr_set_level (old_level);
@@ -339,7 +347,18 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
+  struct thread * first_thread;
+
   thread_current ()->priority = new_priority;
+
+  if (list_empty(&ready_list))
+	return NULL;
+
+  first_thread = list_entry( list_begin(&ready_list), struct thread, elem);
+
+  if ( thread_current()->priority <  first_thread->priority ) {
+	thread_yield();
+  }
 }
 
 /* Returns the current thread's priority. */
@@ -469,10 +488,13 @@ init_thread (struct thread *t, const char *name, int priority)
   t->magic = THREAD_MAGIC;
   /*Initialize expected wake up ticks*/
   t->expected_wakeUp_ticks = 0;
+  t->is_donated = false;
+  t->prev_priority = 0;
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
   intr_set_level (old_level);
+
 }
 
 /* Allocates a SIZE-byte frame at the top of thread T's stack and
@@ -566,6 +588,8 @@ schedule (void)
   ASSERT (cur->status != THREAD_RUNNING);
   ASSERT (is_thread (next));
 
+  //printf("%d: next thread's priority", next->tid);
+
   if (cur != next)
     prev = switch_threads (cur, next);
   thread_schedule_tail (prev);
@@ -596,7 +620,6 @@ thread_sleep(int64_t ticks){
   old_level = intr_disable ();
   sleepy_thread = thread_current();
  
-  ASSERT (ticks >= 0);
   ASSERT (sleepy_thread != idle_thread);
   
   sleepy_thread->expected_wakeUp_ticks = ticks;
@@ -606,6 +629,7 @@ thread_sleep(int64_t ticks){
 
   intr_set_level (old_level);
 }
+
 
 
 /*emty*/
@@ -621,24 +645,56 @@ less_ticks(const struct list_elem *sleepy, const struct list_elem *e, void *usel
   
 }
 
+bool
+less_priority(const struct list_elem *current, const struct list_elem *e, void *useless){
+
+  struct thread *current_thread;
+  struct thread *e_thread;
+
+  current_thread = list_entry(current, struct thread, elem);
+  e_thread = list_entry(e, struct thread, elem);
+
+  return (current_thread->priority > 
+          e_thread->priority);
+
+}
+
 /*emty*/
 void
 timer_wakeUp(int64_t ticks){
- struct list_elem *e;
- struct list_elem *tail;
- struct thread *temp;
- e = list_begin(&sleep_thread_list);
- tail = list_end(&sleep_thread_list);
+  struct list_elem *e;
+  struct list_elem *ea;
+  struct list_elem *tail;
+  struct thread *temp;
 
- while(e != tail){
-   temp = list_entry(e,struct thread,elem);
-   if(ticks >= temp->expected_wakeUp_ticks){
-     e = list_remove(&temp->elem);
-     thread_unblock(temp);
+  e = list_begin(&sleep_thread_list);
+  tail = list_end(&sleep_thread_list);
+
+  while(e != tail){
+    
+    temp = list_entry(e,struct thread,elem);
+    
+    /*
+    for (ea = list_begin (&ready_list); ea != list_end (&ready_list); ea = list_next (ea)){
+		printf("%d->", list_entry (ea, struct thread, elem)->priority);
+    }
+    printf("\n");
+    */
+
+    if(ticks >= temp->expected_wakeUp_ticks){
+      e = list_remove(&temp->elem);
+      thread_unblock(temp);
+  
+    if ( thread_get_priority() < temp->priority ) {
+ 	intr_yield_on_return ();
+    }
+  
+
    } else{
      break;
    }
   
  }
+
 }
 

@@ -103,6 +103,8 @@ struct thread
  
     /*Left tick to wake up*/
     int expected_wakeUp_ticks; 
+    bool is_donated;                       /* Prev Priority. */
+    int prev_priority;                       /* Prev Priority. */
   };
 
 /* If false (default), use round-robin scheduler.
@@ -144,5 +146,8 @@ int thread_get_load_avg (void);
 /*  */
 bool less_ticks(const struct list_elem *sleepy, const struct list_elem *e, void *useless);
 void timer_wakeUp(int64_t ticks);
+
+bool less_priority(const struct list_elem *current, const struct list_elem *e, void *useless);
+
 
 #endif /* threads/thread.h */
