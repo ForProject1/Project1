@@ -103,8 +103,14 @@ struct thread
  
     /*Left tick to wake up*/
     int expected_wakeUp_ticks; 
-    bool is_donated;                       /* Prev Priority. */
-    int prev_priority;                       /* Prev Priority. */
+    int origin_priority;
+
+    int mlfqs_priority;
+    int nice_value;
+    int recent_cpu;
+
+    struct list lock_list;
+    struct lock *seeking;
   };
 
 /* If false (default), use round-robin scheduler.

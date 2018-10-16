@@ -68,8 +68,8 @@ sema_down (struct semaphore *sema)
   old_level = intr_disable ();
   while (sema->value == 0) 
     {
-      list_insert_ordered(&sema->waiters, &thread_current()->elem, &less_priority, NULL);
-      thread_block ();
+       list_insert_ordered(&sema->waiters, &thread_current()->elem, &less_priority, NULL);
+       thread_block ();
     }
   sema->value--;
   intr_set_level (old_level);
@@ -116,9 +116,12 @@ sema_up (struct semaphore *sema)
   old_level = intr_disable ();
   sema->value++;
   if (!list_empty (&sema->waiters)) {
+    list_sort(&sema->waiters,&less_priority,NULL);
     t = list_entry (list_pop_front (&sema->waiters),struct thread, elem);
     thread_unblock (t);
-    if(thread_current()->priority < t->priority){
+    if(thread_current()->priority < t->priority && !thread_mlfqs){
+      thread_yield();
+    } else if(thread_mlfqs){
       thread_yield();
     }
   }
@@ -183,8 +186,8 @@ void
 lock_init (struct lock *lock)
 {
   ASSERT (lock != NULL);
-
   lock->holder = NULL;
+  lock->priority = 0;
   sema_init (&lock->semaphore, 1);
 }
 
@@ -199,14 +202,56 @@ lock_init (struct lock *lock)
 void
 lock_acquire (struct lock *lock)
 {
+  struct thread *cur;
+  struct thread *lock_holder;
+  struct lock *temp_lock;
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
 
+  if(!thread_mlfqs){
+    cur = thread_current();
+    lock_holder = lock->holder;
+    temp_lock = lock;
+  
+    cur->seeking = lock;
+  
+    if(lock_holder == NULL){
+      lock->priority = cur->priority;
+    }
+  
+    while(lock_holder != NULL){
+	  if(cur->priority > lock_holder->priority){
+  		temp_lock->priority = cur->priority;
+		  lock_holder->priority = cur->priority;
+  	  }
+  	  if(lock_holder->seeking != NULL){
+    		temp_lock = lock_holder->seeking;
+		lock_holder=temp_lock->holder;
+	  } 
+	  else break;
+    }
+  }
+
   sema_down (&lock->semaphore);
-  lock->holder = thread_current ();
+  lock->holder = thread_current();
+
+  if(!thread_mlfqs){
+    list_insert_ordered(&cur->lock_list,&lock->elem,&less_lock_priority,NULL);
+    cur->seeking = NULL;
+  } 
 }
 
+bool
+less_lock_priority(const struct list_elem *a, const struct list_elem *e, void *useless){
+  struct lock *a_lock;
+  struct lock *e_lock;
+  a_lock = list_entry(a,struct lock,elem);
+  e_lock = list_entry(e,struct lock,elem);
+  
+  return (a_lock->priority > e_lock->priority);
+  
+}
 /* Tries to acquires LOCK and returns true if successful or false
    on failure.  The lock must not already be held by the current
    thread.
@@ -235,10 +280,24 @@ lock_try_acquire (struct lock *lock)
 void
 lock_release (struct lock *lock) 
 {
+  struct thread *cur = thread_current();
+
   ASSERT (lock != NULL);
   ASSERT (lock_held_by_current_thread (lock));
+  
+
   lock->holder = NULL;
+  list_remove(&lock->elem);
+
+  if(!list_empty(&cur->lock_list)){
+    list_sort(&cur->lock_list,&less_lock_priority,NULL);
+    cur->priority = list_entry(list_begin(&cur->lock_list),struct lock,elem)->priority; 
+  } else {
+    cur->priority = cur->origin_priority;
+  }
+
   sema_up (&lock->semaphore);
+
 }
 
 /* Returns true if the current thread holds LOCK, false

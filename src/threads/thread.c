@@ -20,6 +20,10 @@
    of thread.h for details. */
 #define THREAD_MAGIC 0xcd6abf4b
 
+
+/*load avg*/
+static int thread_load_avg;
+
 /* List of processes in THREAD_READY state, that is, processes
    that are ready to run but not actually running. */
 static struct list ready_list;
@@ -96,6 +100,7 @@ thread_init (void)
   list_init (&ready_list);
   list_init (&all_list);
   list_init(&sleep_thread_list);
+
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -347,9 +352,13 @@ thread_foreach (thread_action_func *func, void *aux)
 void
 thread_set_priority (int new_priority) 
 {
+  struct thread * cur = thread_current();
   struct thread * first_thread;
-
-  thread_current ()->priority = new_priority;
+  
+  if(cur->priority == cur->origin_priority){
+    cur->priority = new_priority;  
+  }
+  cur->origin_priority = new_priority;  
 
   if (list_empty(&ready_list))
 	return NULL;
@@ -370,9 +379,14 @@ thread_get_priority (void)
 
 /* Sets the current thread's nice value to NICE. */
 void
-thread_set_nice (int nice UNUSED) 
+thread_set_nice (int nice) 
 {
-  /* Not yet implemented. */
+  if(nice > 20 || nice < -20){
+    return;
+  }else {
+    thread_current()->nice_value = nice;
+    recalculate_mlfqs_current();
+  }
 }
 
 /* Returns the current thread's nice value. */
@@ -395,9 +409,28 @@ thread_get_load_avg (void)
 int
 thread_get_recent_cpu (void) 
 {
+  
   /* Not yet implemented. */
   return 0;
 }
+
+/*emty*/
+void
+recalculate_mlfqs_all(){
+   struct list_elem *e;
+   struct thread *t;
+   for(e=list_begin(&all_list);e!=list_end(&all_list);e = e->next){
+     t = list_entry(e,struct thread, elem);
+     t->mlfqs_priority = PRI_MAX - (t->recent_cpu/4) - (t->nice_value*2);
+   }
+
+}
+
+recalculate_mlfqs_current(){
+  struct thread *cur = thread_current();
+  cur->mlfqs_priority = PRI_MAX - (cur->recent_cpu/4) - (cur->nice_value*2);
+}
+
 
 /* Idle thread.  Executes when no other thread is ready to run.
 
@@ -488,8 +521,15 @@ init_thread (struct thread *t, const char *name, int priority)
   t->magic = THREAD_MAGIC;
   /*Initialize expected wake up ticks*/
   t->expected_wakeUp_ticks = 0;
-  t->is_donated = false;
-  t->prev_priority = 0;
+
+  t->mlfqs_priority = PRI_MIN;
+  t->recent_cpu = 0;
+  t->nice_value = 0;
+
+  t->origin_priority = priority;
+  list_init(&t->lock_list);
+  t->seeking = NULL;
+
 
   old_level = intr_disable ();
   list_push_back (&all_list, &t->allelem);
@@ -674,13 +714,6 @@ timer_wakeUp(int64_t ticks){
     
     temp = list_entry(e,struct thread,elem);
     
-    /*
-    for (ea = list_begin (&ready_list); ea != list_end (&ready_list); ea = list_next (ea)){
-		printf("%d->", list_entry (ea, struct thread, elem)->priority);
-    }
-    printf("\n");
-    */
-
     if(ticks >= temp->expected_wakeUp_ticks){
       e = list_remove(&temp->elem);
       thread_unblock(temp);
@@ -688,13 +721,12 @@ timer_wakeUp(int64_t ticks){
     if ( thread_get_priority() < temp->priority ) {
  	intr_yield_on_return ();
     }
-  
-
    } else{
      break;
    }
-  
  }
-
 }
+
+
+
 
