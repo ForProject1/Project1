@@ -151,9 +151,16 @@ int thread_get_load_avg (void);
 
 /*  */
 bool less_ticks(const struct list_elem *sleepy, const struct list_elem *e, void *useless);
-void timer_wakeUp(int64_t ticks);
-
+void timer_wakeUp(int ticks);
 bool less_priority(const struct list_elem *current, const struct list_elem *e, void *useless);
+
+void Update_load_avg();
+void Update_recent_current();
+void Update_recent_all();
+void recalculate_mlfqs_all();
+void recalculate_mlfqs_current();
+
+
 
 
 #endif /* threads/thread.h */

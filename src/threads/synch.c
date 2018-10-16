@@ -121,7 +121,7 @@ sema_up (struct semaphore *sema)
     thread_unblock (t);
     if(thread_current()->priority < t->priority && !thread_mlfqs){
       thread_yield();
-    } else if(thread_mlfqs){
+    }else if(thread_current()->mlfqs_priority < t->mlfqs_priority && thread_mlfqs){
       thread_yield();
     }
   }
@@ -208,13 +208,12 @@ lock_acquire (struct lock *lock)
   ASSERT (lock != NULL);
   ASSERT (!intr_context ());
   ASSERT (!lock_held_by_current_thread (lock));
+  cur = thread_current();
+  cur->seeking = lock;
 
   if(!thread_mlfqs){
-    cur = thread_current();
     lock_holder = lock->holder;
     temp_lock = lock;
-  
-    cur->seeking = lock;
   
     if(lock_holder == NULL){
       lock->priority = cur->priority;
@@ -235,10 +234,10 @@ lock_acquire (struct lock *lock)
 
   sema_down (&lock->semaphore);
   lock->holder = thread_current();
+  cur->seeking = NULL;
 
   if(!thread_mlfqs){
     list_insert_ordered(&cur->lock_list,&lock->elem,&less_lock_priority,NULL);
-    cur->seeking = NULL;
   } 
 }
 
@@ -248,9 +247,8 @@ less_lock_priority(const struct list_elem *a, const struct list_elem *e, void *u
   struct lock *e_lock;
   a_lock = list_entry(a,struct lock,elem);
   e_lock = list_entry(e,struct lock,elem);
-  
-  return (a_lock->priority > e_lock->priority);
-  
+
+  return (a_lock->priority > e_lock->priority);  
 }
 /* Tries to acquires LOCK and returns true if successful or false
    on failure.  The lock must not already be held by the current
@@ -287,13 +285,15 @@ lock_release (struct lock *lock)
   
 
   lock->holder = NULL;
-  list_remove(&lock->elem);
 
-  if(!list_empty(&cur->lock_list)){
-    list_sort(&cur->lock_list,&less_lock_priority,NULL);
-    cur->priority = list_entry(list_begin(&cur->lock_list),struct lock,elem)->priority; 
-  } else {
-    cur->priority = cur->origin_priority;
+  if(!thread_mlfqs){
+    list_remove(&lock->elem);
+    if(!list_empty(&cur->lock_list)){
+      list_sort(&cur->lock_list,&less_lock_priority,NULL);
+      cur->priority = list_entry(list_begin(&cur->lock_list),struct lock,elem)->priority; 
+    } else {
+      cur->priority = cur->origin_priority;
+    }
   }
 
   sema_up (&lock->semaphore);
@@ -403,8 +403,11 @@ less_func(const struct list_elem *a,const struct list_elem *b, void *useless){
 
   thread_a = list_entry(list_begin(&sema_a->waiters),struct thread,elem);
   thread_b = list_entry(list_begin(&sema_b->waiters),struct thread,elem);
-
-  return thread_a->priority > thread_b->priority;
+  if(thread_mlfqs){
+    return thread_a->mlfqs_priority > thread_b->mlfqs_priority;
+  }else{ 
+    return thread_a->priority > thread_b->priority;
+  }
 
 }
 
